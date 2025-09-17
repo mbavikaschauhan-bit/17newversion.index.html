@@ -3209,9 +3209,13 @@
         const transactionTitle = document.getElementById('transaction-modal-title');
         const transactionSubmitBtn = document.getElementById('transaction-submit-btn');
         let currentTxType = 'Deposit';
+        let isEditMode = false;
+        let editingEntry = null;
 
         const openTransactionModal = (type) => {
             currentTxType = type;
+            isEditMode = false;
+            editingEntry = null;
             transactionTitle.textContent = type === 'Deposit' ? 'Deposit Funds' : 'Withdraw Funds';
             transactionSubmitBtn.querySelector('.btn-text').textContent = type === 'Deposit' ? 'Add Deposit' : 'Add Withdrawal';
             transactionForm.reset();
@@ -3219,6 +3223,9 @@
         };
         const closeTransactionModal = () => {
             transactionModal.classList.add('hidden');
+            // Reset edit mode when modal is closed
+            isEditMode = false;
+            editingEntry = null;
         };
         document.querySelectorAll('#transaction-modal .close-modal-btn').forEach(btn => btn.addEventListener('click', closeTransactionModal));
         fmDepositBtn?.addEventListener('click', () => openTransactionModal('Deposit'));
@@ -3228,14 +3235,40 @@
             const amount = parseFloat(document.getElementById('transaction-amount').value) || 0;
             const date = document.getElementById('transaction-date').value || new Date().toISOString().slice(0,10);
             const notes = document.getElementById('transaction-notes').value || '';
-            const entry = { id: `${Date.now()}`, type: currentTxType, amount, date, notes };
+            
             try {
-                await dataStore.upsertLedger(entry);
-                appState.ledger = await dataStore.getLedger();
-                renderFundManagement();
-                renderDashboard();
-                closeTransactionModal();
-                showToast(`${currentTxType} of ${formatCurrency(amount)} completed successfully!`, 'success');
+                if (isEditMode && editingEntry) {
+                    // Update existing entry
+                    console.log('Updating entry:', editingEntry);
+                    const updatedEntry = { ...editingEntry, amount, date, notes };
+                    await dataStore.upsertLedger(updatedEntry);
+                    appState.ledger = await dataStore.getLedger();
+                    
+                    try {
+                        renderFundManagement();
+                        renderDashboard();
+                    } catch (renderErr) {
+                        console.error('Render error:', renderErr);
+                    }
+                    
+                    showToast(`${editingEntry.type} updated successfully!`, 'success');
+                    closeTransactionModal();
+                } else {
+                    // Create new entry
+                    const entry = { id: `${Date.now()}`, type: currentTxType, amount, date, notes };
+                    await dataStore.upsertLedger(entry);
+                    appState.ledger = await dataStore.getLedger();
+                    
+                    try {
+                        renderFundManagement();
+                        renderDashboard();
+                    } catch (renderErr) {
+                        console.error('Render error:', renderErr);
+                    }
+                    
+                    showToast(`${currentTxType} of ${formatCurrency(amount)} completed successfully!`, 'success');
+                    closeTransactionModal();
+                }
             } catch (err) {
                 console.error('Failed to save ledger entry', err);
                 showToast('Failed to save transaction. Please try again.', 'error');
@@ -3681,32 +3714,23 @@
                             const id = btn.getAttribute('data-id');
                             const entry = appState.ledger.find(x => String(x.id) === String(id));
                             if (!entry) return;
-                            // open modal prefilled
+                            
+                            // Set edit mode
+                            isEditMode = true;
+                            editingEntry = entry;
                             currentTxType = entry.type;
+                            
+                            // Fill form with existing data
                             document.getElementById('transaction-amount').value = entry.amount || 0;
                             document.getElementById('transaction-date').value = entry.date || '';
                             document.getElementById('transaction-notes').value = entry.notes || '';
+                            
+                            // Update modal title and button text
                             transactionTitle.textContent = entry.type === 'Deposit' ? 'Deposit Funds' : 'Withdraw Funds';
                             transactionSubmitBtn.querySelector('.btn-text').textContent = entry.type === 'Deposit' ? 'Update Deposit' : 'Update Withdrawal';
+                            
+                            // Show modal
                             transactionModal.classList.remove('hidden');
-                            transactionForm.onsubmit = async (e) => {
-                                e.preventDefault();
-                                const amount = parseFloat(document.getElementById('transaction-amount').value) || 0;
-                                const date = document.getElementById('transaction-date').value || new Date().toISOString().slice(0,10);
-                                const notes = document.getElementById('transaction-notes').value || '';
-                                try {
-                                    await dataStore.upsertLedger({ ...entry, amount, date, notes });
-                                    appState.ledger = await dataStore.getLedger();
-                                    renderFundManagement();
-                                    renderDashboard();
-                                    transactionModal.classList.add('hidden');
-                                    transactionForm.onsubmit = null; // revert to default
-                                    showToast(`${entry.type} updated successfully!`, 'success');
-                                } catch (err) { 
-                                    console.error('update ledger failed', err);
-                                    showToast('Failed to update transaction. Please try again.', 'error');
-                                }
-                            };
                         });
                     });
                     tbody.querySelectorAll('button[data-ledger-action="delete"]').forEach(btn => {
